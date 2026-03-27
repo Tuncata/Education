@@ -378,9 +378,9 @@ function drawWallBrick(wx, wy, w, h, offsetX, theme, isLeft) {
 function generatePlatforms() {
     // Generate new platforms above the current highest one
     while (highestPlatformY > camera.y - 300) {
-        highestPlatformY -= 60 + Math.random() * 40; // 60-100px gap between levels
+        highestPlatformY -= 45 + Math.random() * 30; // 45-75px gap (reachable with jump)
         const playArea = canvas.width - wallWidth * 2;
-        const width = 80 + Math.random() * 80;       // 80-160px wide
+        const width = 90 + Math.random() * 80;       // 90-170px wide
         const x = wallWidth + Math.random() * (playArea - width);
 
         const plat = {
@@ -390,14 +390,13 @@ function generatePlatforms() {
             height: 16
         };
 
-        // ~35% chance to be a moving platform
-        if (Math.random() < 0.35) {
+        // ~30% chance to be a moving platform
+        if (Math.random() < 0.30) {
             plat.moving = true;
-            plat.moveSpeed = 0.3 + Math.random() * 0.5;
-            const range = 60 + Math.random() * 100;
+            plat.moveSpeed = 0.3 + Math.random() * 0.4;
+            const range = 60 + Math.random() * 80;
             plat.moveMin = Math.max(wallWidth, x - range / 2);
             plat.moveMax = Math.min(canvas.width - wallWidth - width, x + range / 2);
-            // Ensure min < max
             if (plat.moveMin >= plat.moveMax) {
                 plat.moveMin = wallWidth;
                 plat.moveMax = canvas.width - wallWidth - width;
@@ -406,6 +405,19 @@ function generatePlatforms() {
         }
 
         platforms.push(plat);
+
+        // Add an extra stepping-stone platform if the gap is wide horizontally
+        // (ensures there's always a reachable path)
+        if (Math.random() < 0.3) {
+            const extraWidth = 70 + Math.random() * 50;
+            const extraX = wallWidth + Math.random() * (playArea - extraWidth);
+            platforms.push({
+                x: extraX,
+                y: highestPlatformY + 20 + Math.random() * 15,
+                width: extraWidth,
+                height: 16
+            });
+        }
     }
 }
 
@@ -443,11 +455,38 @@ function isColliding(rect1, rect2) {
     );
 }
 
-// --- Score ---
+// --- Score & Game State ---
 let score = 0;
+let gameOver = false;
+let finalScore = 0;
+
+function resetGame() {
+    player.x = 50;
+    player.y = 300;
+    player.velX = 0;
+    player.velY = 0;
+    player.highestY = 300;
+    camera.y = 0;
+    camera.targetY = 0;
+    score = 0;
+    gameOver = false;
+
+    platforms.length = 0;
+    platforms.push(
+        { x: 28, y: 468, width: 744, height: 32 },
+        { x: 150, y: 370, width: 120, height: 16 },
+        { x: 350, y: 300, width: 120, height: 16, moving: true, moveSpeed: 0.5, moveMin: 280, moveMax: 520, moveDir: 1 },
+        { x: 550, y: 230, width: 120, height: 16 },
+        { x: 300, y: 160, width: 120, height: 16, moving: true, moveSpeed: 0.4, moveMin: 200, moveMax: 450, moveDir: 1 },
+        { x: 80,  y: 100, width: 120, height: 16 }
+    );
+    highestPlatformY = 100;
+    bgParticles.length = 0;
+}
 
 // --- Update ---
 function update() {
+    if (gameOver) return;
     // Horizontal movement (Arrow keys + WASD)
     if (keys["ArrowLeft"] || keys["a"]) {
         player.velX = -player.speed;
@@ -546,28 +585,10 @@ function update() {
     // Cleanup old platforms below
     cleanupPlatforms();
 
-    // Reset if player falls too far below the camera
-    if (player.y > camera.y + canvas.height + 100) {
-        player.x = 50;
-        player.y = 300;
-        player.velX = 0;
-        player.velY = 0;
-        player.highestY = 300;
-        camera.y = 0;
-        camera.targetY = 0;
-        score = 0;
-
-        // Reset platforms
-        platforms.length = 0;
-        platforms.push(
-            { x: 28, y: 468, width: 744, height: 32 },
-            { x: 150, y: 370, width: 120, height: 16 },
-            { x: 350, y: 300, width: 120, height: 16, moving: true, moveSpeed: 0.5, moveMin: 280, moveMax: 520, moveDir: 1 },
-            { x: 550, y: 230, width: 120, height: 16 },
-            { x: 300, y: 160, width: 120, height: 16, moving: true, moveSpeed: 0.4, moveMin: 200, moveMax: 450, moveDir: 1 },
-            { x: 80,  y: 100, width: 120, height: 16 }
-        );
-        highestPlatformY = 100;
+    // Game Over if player falls below the visible screen
+    if (player.y > camera.y + canvas.height + 50) {
+        gameOver = true;
+        finalScore = score;
     }
 }
 
@@ -827,10 +848,70 @@ function draw() {
     ctx.fillText(currentTheme.name, canvas.width - 150, 48);
 }
 
+// --- Game Over Screen ---
+function drawGameOver() {
+    // Dim overlay
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Game Over box
+    const boxW = 340;
+    const boxH = 200;
+    const boxX = (canvas.width - boxW) / 2;
+    const boxY = (canvas.height - boxH) / 2;
+
+    // Box background
+    ctx.fillStyle = "#1a1a2e";
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 12);
+    ctx.fill();
+
+    // Box border
+    ctx.strokeStyle = "#e94560";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 12);
+    ctx.stroke();
+
+    // Title
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 36px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, boxY + 55);
+
+    // Score
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "20px monospace";
+    ctx.fillText("Score: " + finalScore, canvas.width / 2, boxY + 100);
+
+    // Level reached
+    const theme = getThemeForY(player.y);
+    ctx.fillStyle = theme.wallAccent;
+    ctx.font = "16px monospace";
+    ctx.fillText("Reached: " + theme.name, canvas.width / 2, boxY + 130);
+
+    // Restart prompt
+    ctx.fillStyle = "#aaaaaa";
+    ctx.font = "14px monospace";
+    ctx.fillText("Press ENTER or SPACE to restart", canvas.width / 2, boxY + 170);
+
+    ctx.textAlign = "start"; // reset alignment
+}
+
+// --- Restart listener ---
+document.addEventListener("keydown", (e) => {
+    if (gameOver && (e.key === "Enter" || e.key === " ")) {
+        resetGame();
+    }
+});
+
 // --- Game Loop ---
 function gameLoop() {
     update();
     draw();
+    if (gameOver) {
+        drawGameOver();
+    }
     requestAnimationFrame(gameLoop);
 }
 
