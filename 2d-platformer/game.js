@@ -3,11 +3,15 @@
 // ============================================
 
 const canvas = document.getElementById("gameCanvas");
+const GAME_W = 1920;
+const GAME_H = 1080;
+canvas.width = GAME_W;
+canvas.height = GAME_H;
 const ctx = canvas.getContext("2d");
 
 // --- Current User (logged in) ---
 let currentUser = null; // { userId, username }
-let gameScreen = "login"; // "login", "playing", "gameover"
+let gameScreen = "login"; // "login", "playing", "gameover", "paused"
 let loginError = "";
 let loginMode = "login"; // "login" or "register"
 let inputUsername = "";
@@ -25,41 +29,41 @@ const camera = {
 
 // --- Player ---
 const player = {
-    x: 50,
-    y: 300,
-    width: 22,
-    height: 40,
+    x: 120,
+    y: 800,
+    width: 44,
+    height: 80,
     velX: 0,
     velY: 0,
-    speed: 2.5,
-    jumpForce: -10,
+    speed: 5,
+    jumpForce: -16,
     grounded: false,
     facing: 1, // 1 = right, -1 = left
-    highestY: 300 // tracks highest point reached
+    highestY: 800 // tracks highest point reached
 };
 
 // --- Physics ---
-const gravity = 0.35;
+const gravity = 0.55;
 const friction = 0.5;
 
 // --- Platforms ---
 // Each platform can optionally have: moving, moveSpeed, moveMin, moveMax
 const platforms = [
     // Ground
-    { x: 28, y: 468, width: 744, height: 32 },
+    { x: 60, y: 1020, width: 1800, height: 60 },
     // Starting floating platforms
-    { x: 150, y: 370, width: 120, height: 16 },
-    { x: 350, y: 300, width: 120, height: 16, moving: true, moveSpeed: 0.5, moveMin: 280, moveMax: 520 },
-    { x: 550, y: 230, width: 120, height: 16 },
-    { x: 300, y: 160, width: 120, height: 16, moving: true, moveSpeed: 0.4, moveMin: 200, moveMax: 450 },
-    { x: 80,  y: 100, width: 120, height: 16 }
+    { x: 300, y: 860, width: 260, height: 26 },
+    { x: 750, y: 720, width: 260, height: 26, moving: true, moveSpeed: 0.8, moveMin: 600, moveMax: 1200 },
+    { x: 1250, y: 580, width: 260, height: 26 },
+    { x: 750, y: 440, width: 260, height: 26, moving: true, moveSpeed: 0.7, moveMin: 500, moveMax: 1050 },
+    { x: 250, y: 300, width: 260, height: 26 }
 ];
 
 // Track the highest (lowest Y value) platform generated so far
-let highestPlatformY = 100;
+let highestPlatformY = 300;
 
 // --- Wall Settings ---
-const wallWidth = 28;
+const wallWidth = 60;
 
 // --- Level Themes (based on height, Y goes negative as you climb) ---
 const levelThemes = [
@@ -184,7 +188,7 @@ const MAX_PARTICLES = 40;
 function spawnParticle(theme) {
     const type = theme.particles;
     const p = {
-        x: wallWidth + Math.random() * (canvas.width - wallWidth * 2),
+        x: wallWidth + Math.random() * (GAME_W - wallWidth * 2),
         y: camera.y - 10,
         type: type,
         life: 1.0
@@ -211,7 +215,7 @@ function spawnParticle(theme) {
         p.size = 2 + Math.random() * 3;
         p.vy = -(0.5 + Math.random() * 1.0); // float upward
         p.vx = (Math.random() - 0.5) * 0.6;
-        p.y = camera.y + canvas.height + 10;  // start from bottom
+        p.y = camera.y + GAME_H + 10;  // start from bottom
         p.color = Math.random() > 0.5 ? "#FF6600" : "#FFAA00";
     } else if (type === "sparkles") {
         p.size = 1 + Math.random() * 2;
@@ -241,7 +245,7 @@ function updateParticles(theme) {
         if (p.twinkle !== undefined) p.twinkle += 0.1;
 
         // Remove if off-screen or dead
-        if (p.life <= 0 || p.y > camera.y + canvas.height + 30 || p.y < camera.y - 30) {
+        if (p.life <= 0 || p.y > camera.y + GAME_H + 30 || p.y < camera.y - 30) {
             bgParticles.splice(i, 1);
         }
     }
@@ -292,20 +296,70 @@ function drawParticles() {
     }
 }
 
+// --- Background Decoration (parallax depth objects) ---
+// Pre-generate background decorations so they stay consistent
+const bgDecorations = [];
+for (let i = 0; i < 60; i++) {
+    bgDecorations.push({
+        x: Math.random() * 1920,
+        worldY: Math.random() * -20000, // spread across full world height
+        size: 10 + Math.random() * 30,
+        type: Math.floor(Math.random() * 3), // 0=circle, 1=diamond, 2=cross
+        parallax: 0.3 + Math.random() * 0.4, // depth factor
+        alpha: 0.03 + Math.random() * 0.06
+    });
+}
+
 // --- Draw Background ---
 function drawBackground(theme) {
-    // Gradient background fills the entire canvas (drawn before camera transform)
-    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    // Gradient background fills the entire canvas
+    const grad = ctx.createLinearGradient(0, 0, 0, GAME_H);
     grad.addColorStop(0, theme.bgTop);
     grad.addColorStop(1, theme.bgBottom);
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+    // Parallax background decorations (depth objects behind everything)
+    for (const dec of bgDecorations) {
+        const screenY = dec.worldY - camera.y * dec.parallax;
+        // Wrap vertically so decorations are always visible
+        const wrappedY = ((screenY % GAME_H) + GAME_H) % GAME_H;
+
+        ctx.globalAlpha = dec.alpha;
+        ctx.fillStyle = "#ffffff";
+
+        if (dec.type === 0) {
+            ctx.beginPath();
+            ctx.arc(dec.x, wrappedY, dec.size, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (dec.type === 1) {
+            ctx.save();
+            ctx.translate(dec.x, wrappedY);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillRect(-dec.size / 2, -dec.size / 2, dec.size, dec.size);
+            ctx.restore();
+        } else {
+            ctx.fillRect(dec.x - dec.size / 2, wrappedY - 2, dec.size, 4);
+            ctx.fillRect(dec.x - 2, wrappedY - dec.size / 2, 4, dec.size);
+        }
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Vignette effect (darkened edges)
+    const vignette = ctx.createRadialGradient(
+        GAME_W / 2, GAME_H / 2, GAME_H * 0.3,
+        GAME_W / 2, GAME_H / 2, GAME_H * 0.9
+    );
+    vignette.addColorStop(0, "rgba(0,0,0,0)");
+    vignette.addColorStop(1, "rgba(0,0,0,0.3)");
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
 }
 
 // --- Draw Walls ---
 function drawWalls() {
     const visibleTop = camera.y - 50;
-    const visibleBottom = camera.y + canvas.height + 50;
+    const visibleBottom = camera.y + GAME_H + 50;
 
     // Draw wall in vertical slices, switching theme as needed
     let y = visibleTop;
@@ -325,7 +379,7 @@ function drawWalls() {
             // Left wall
             drawWallBrick(0, brickY, wallWidth, brickH, offsetX, currentTheme, true);
             // Right wall
-            drawWallBrick(canvas.width - wallWidth, brickY, wallWidth, brickH, offsetX, currentTheme, false);
+            drawWallBrick(GAME_W - wallWidth, brickY, wallWidth, brickH, offsetX, currentTheme, false);
 
             brickY += brickH;
         }
@@ -387,15 +441,15 @@ function drawWallBrick(wx, wy, w, h, offsetX, theme, isLeft) {
 
 // --- Procedural Platform Generation ---
 // Max horizontal jump distance the player can cover (~150px with speed 2.5 and gravity 0.35)
-const MAX_JUMP_REACH_X = 140;
-let lastPlatX = 400; // center of last platform (track for reachability)
-let lastPlatW = 120;
+const MAX_JUMP_REACH_X = 340;
+let lastPlatX = 380; // center of last platform (track for reachability)
+let lastPlatW = 260;
 
 function generatePlatforms() {
-    while (highestPlatformY > camera.y - 300) {
-        highestPlatformY -= 45 + Math.random() * 30; // 45-75px vertical gap
-        const playArea = canvas.width - wallWidth * 2;
-        const width = 90 + Math.random() * 80;       // 90-170px wide
+    while (highestPlatformY > camera.y - 600) {
+        highestPlatformY -= 90 + Math.random() * 50; // 90-140px vertical gap
+        const playArea = GAME_W - wallWidth * 2;
+        const width = 200 + Math.random() * 140;     // 200-340px wide
 
         // Ensure the new platform is within horizontal jump reach of the last one
         const lastLeft = lastPlatX - lastPlatW / 2;
@@ -403,11 +457,24 @@ function generatePlatforms() {
 
         // Reachable X range: player can jump from either edge of the last platform
         const reachMin = Math.max(wallWidth, lastLeft - MAX_JUMP_REACH_X);
-        const reachMax = Math.min(canvas.width - wallWidth - width, lastRight + MAX_JUMP_REACH_X - width);
+        const reachMax = Math.min(GAME_W - wallWidth - width, lastRight + MAX_JUMP_REACH_X - width);
 
         let x;
         if (reachMin < reachMax) {
-            x = reachMin + Math.random() * (reachMax - reachMin);
+            // Bias placement toward the opposite side of the play area to force spread
+            const playCenter = GAME_W / 2;
+            if (lastPlatX < playCenter - 100) {
+                // Last was on the left, bias right
+                const mid = (reachMin + reachMax) / 2;
+                x = mid + Math.random() * (reachMax - mid);
+            } else if (lastPlatX > playCenter + 100) {
+                // Last was on the right, bias left
+                const mid = (reachMin + reachMax) / 2;
+                x = reachMin + Math.random() * (mid - reachMin);
+            } else {
+                // Near center, go either direction randomly
+                x = reachMin + Math.random() * (reachMax - reachMin);
+            }
         } else {
             // Fallback: place near center of play area
             x = wallWidth + (playArea - width) / 2;
@@ -417,19 +484,19 @@ function generatePlatforms() {
             x: x,
             y: highestPlatformY,
             width: width,
-            height: 16
+            height: 26
         };
 
         // ~30% chance to be a moving platform
         if (Math.random() < 0.30) {
             plat.moving = true;
-            plat.moveSpeed = 0.3 + Math.random() * 0.4;
-            const range = 60 + Math.random() * 80;
+            plat.moveSpeed = 0.4 + Math.random() * 0.5;
+            const range = 150 + Math.random() * 200;
             plat.moveMin = Math.max(wallWidth, x - range / 2);
-            plat.moveMax = Math.min(canvas.width - wallWidth - width, x + range / 2);
+            plat.moveMax = Math.min(GAME_W - wallWidth - width, x + range / 2);
             if (plat.moveMin >= plat.moveMax) {
                 plat.moveMin = wallWidth;
-                plat.moveMax = canvas.width - wallWidth - width;
+                plat.moveMax = GAME_W - wallWidth - width;
             }
             plat.moveDir = 1;
         }
@@ -445,7 +512,7 @@ function generatePlatforms() {
 // Remove platforms that are far below the camera (cleanup)
 function cleanupPlatforms() {
     for (let i = platforms.length - 1; i >= 0; i--) {
-        if (platforms[i].y > camera.y + canvas.height + 200) {
+        if (platforms[i].y > camera.y + GAME_H + 200) {
             platforms.splice(i, 1);
         }
     }
@@ -482,11 +549,11 @@ let gameOver = false;
 let finalScore = 0;
 
 function resetGame() {
-    player.x = 50;
-    player.y = 300;
+    player.x = 120;
+    player.y = 800;
     player.velX = 0;
     player.velY = 0;
-    player.highestY = 300;
+    player.highestY = 800;
     camera.y = 0;
     camera.targetY = 0;
     score = 0;
@@ -494,22 +561,22 @@ function resetGame() {
 
     platforms.length = 0;
     platforms.push(
-        { x: 28, y: 468, width: 744, height: 32 },
-        { x: 150, y: 370, width: 120, height: 16 },
-        { x: 350, y: 300, width: 120, height: 16, moving: true, moveSpeed: 0.5, moveMin: 280, moveMax: 520, moveDir: 1 },
-        { x: 550, y: 230, width: 120, height: 16 },
-        { x: 300, y: 160, width: 120, height: 16, moving: true, moveSpeed: 0.4, moveMin: 200, moveMax: 450, moveDir: 1 },
-        { x: 80,  y: 100, width: 120, height: 16 }
+        { x: 60, y: 1020, width: 1800, height: 60 },
+        { x: 300, y: 860, width: 260, height: 26 },
+        { x: 750, y: 720, width: 260, height: 26, moving: true, moveSpeed: 0.8, moveMin: 600, moveMax: 1200, moveDir: 1 },
+        { x: 1250, y: 580, width: 260, height: 26 },
+        { x: 750, y: 440, width: 260, height: 26, moving: true, moveSpeed: 0.7, moveMin: 500, moveMax: 1050, moveDir: 1 },
+        { x: 250, y: 300, width: 260, height: 26 }
     );
-    highestPlatformY = 100;
-    lastPlatX = 140; // center of the top starting platform (x:80, w:120)
-    lastPlatW = 120;
+    highestPlatformY = 300;
+    lastPlatX = 380;
+    lastPlatW = 260;
     bgParticles.length = 0;
 }
 
 // --- Update ---
 function update() {
-    if (gameOver) return;
+    if (gameOver || gameScreen === "paused") return;
     // Horizontal movement (Arrow keys + WASD)
     if (keys["ArrowLeft"] || keys["a"]) {
         player.velX = -player.speed;
@@ -545,22 +612,10 @@ function update() {
         }
     }
 
-    // Move player horizontally
-    player.x += player.velX;
+    // Store previous Y position for proper collision resolution
+    const prevY = player.y;
 
-    // Check horizontal collisions
-    for (const platform of platforms) {
-        if (isColliding(player, platform)) {
-            if (player.velX > 0) {
-                player.x = platform.x - player.width;
-            } else if (player.velX < 0) {
-                player.x = platform.x + platform.width;
-            }
-            player.velX = 0;
-        }
-    }
-
-    // Move player vertically
+    // Move player vertically FIRST (most important axis for platformers)
     player.y += player.velY;
 
     // Check vertical collisions
@@ -568,25 +623,49 @@ function update() {
     for (const platform of platforms) {
         if (isColliding(player, platform)) {
             if (player.velY > 0) {
-                // Landing on top
-                player.y = platform.y - player.height;
-                player.grounded = true;
+                // Landing on top — only if player was above the platform before
+                if (prevY + player.height <= platform.y + 4) {
+                    player.y = platform.y - player.height;
+                    player.grounded = true;
 
-                // If on a moving platform, move with it
-                if (platform.moving) {
-                    player.x += platform.moveSpeed * platform.moveDir;
+                    // If on a moving platform, move with it
+                    if (platform.moving) {
+                        player.x += platform.moveSpeed * platform.moveDir;
+                    }
+                    player.velY = 0;
                 }
             } else if (player.velY < 0) {
-                // Hitting from below
-                player.y = platform.y + platform.height;
+                // Hitting from below — only if player was below the platform before
+                if (prevY >= platform.y + platform.height - 4) {
+                    player.y = platform.y + platform.height;
+                    player.velY = 0;
+                }
             }
-            player.velY = 0;
+        }
+    }
+
+    // Move player horizontally
+    player.x += player.velX;
+
+    // Check horizontal collisions
+    for (const platform of platforms) {
+        if (isColliding(player, platform)) {
+            // Calculate overlap on each side to find the smallest push-out
+            const overlapLeft = (player.x + player.width) - platform.x;
+            const overlapRight = (platform.x + platform.width) - player.x;
+
+            if (overlapLeft < overlapRight) {
+                player.x = platform.x - player.width;
+            } else {
+                player.x = platform.x + platform.width;
+            }
+            player.velX = 0;
         }
     }
 
     // Keep player in bounds (inside walls)
     if (player.x < wallWidth) player.x = wallWidth;
-    if (player.x + player.width > canvas.width - wallWidth) player.x = canvas.width - wallWidth - player.width;
+    if (player.x + player.width > GAME_W - wallWidth) player.x = GAME_W - wallWidth - player.width;
 
     // Update score based on height
     if (player.y < player.highestY) {
@@ -596,7 +675,7 @@ function update() {
 
     // --- Camera: follow player upward smoothly ---
     // Camera target: keep player in upper portion of screen
-    const targetCameraY = player.y - canvas.height * 0.35;
+    const targetCameraY = player.y - GAME_H * 0.35;
     if (targetCameraY < camera.targetY) {
         camera.targetY = targetCameraY; // only scroll up, never back down
     }
@@ -609,70 +688,110 @@ function update() {
     cleanupPlatforms();
 
     // Game Over if player falls below the visible screen
-    if (player.y > camera.y + canvas.height + 50) {
+    if (player.y > camera.y + GAME_H + 50) {
         triggerGameOver();
     }
 }
 
 // --- Terraria-style Player ---
 function drawPlayer(x, y, facing) {
-    const px = 2; // pixel size for the sprite
+    const px = 4; // pixel size for the sprite (HD scaled)
+
+    // Shadow under player
+    ctx.fillStyle = "rgba(0,0,0,0.15)";
+    ctx.beginPath();
+    ctx.ellipse(x + 5*px, y + 20*px + 2, 6*px, px, 0, 0, Math.PI * 2);
+    ctx.fill();
 
     // Hair (brown, sits on top of head)
     ctx.fillStyle = "#8B4513";
     ctx.fillRect(x + 3*px, y, 5*px, px);           // top row
     ctx.fillRect(x + 2*px, y + px, 7*px, px);      // second row
     if (facing === 1) {
-        ctx.fillRect(x + 8*px, y + 2*px, 2*px, 2*px); // hair flows right
+        ctx.fillRect(x + 8*px, y + 2*px, 2*px, 2*px);
+        ctx.fillRect(x + 9*px, y + px, px, 2*px);     // extra hair strand
     } else {
-        ctx.fillRect(x + px, y + 2*px, 2*px, 2*px);   // hair flows left
+        ctx.fillRect(x + px, y + 2*px, 2*px, 2*px);
+        ctx.fillRect(x, y + px, px, 2*px);
     }
 
-    // Head (skin)
+    // Head (skin with shading)
     ctx.fillStyle = "#FFCBA4";
     ctx.fillRect(x + 3*px, y + 2*px, 5*px, 5*px);
+    // Cheek shading
+    ctx.fillStyle = "rgba(220,150,120,0.4)";
+    ctx.fillRect(x + 3*px, y + 5*px, px, px);
 
-    // Eyes (white + pupil)
+    // Eyes (white + pupil + highlight)
     ctx.fillStyle = "#FFFFFF";
     if (facing === 1) {
-        ctx.fillRect(x + 5*px, y + 3*px, 2*px, 2*px); // right-facing eye
-        ctx.fillStyle = "#222222";
-        ctx.fillRect(x + 6*px, y + 3*px, px, 2*px);   // pupil
+        ctx.fillRect(x + 5*px, y + 3*px, 2*px, 2*px);
+        ctx.fillStyle = "#1a1a3e";
+        ctx.fillRect(x + 6*px, y + 3*px, px, 2*px);
+        // Eye highlight
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(x + 6*px, y + 3*px, Math.ceil(px/2), Math.ceil(px/2));
     } else {
-        ctx.fillRect(x + 4*px, y + 3*px, 2*px, 2*px); // left-facing eye
-        ctx.fillStyle = "#222222";
-        ctx.fillRect(x + 4*px, y + 3*px, px, 2*px);   // pupil
+        ctx.fillRect(x + 4*px, y + 3*px, 2*px, 2*px);
+        ctx.fillStyle = "#1a1a3e";
+        ctx.fillRect(x + 4*px, y + 3*px, px, 2*px);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(x + 4*px, y + 3*px, Math.ceil(px/2), Math.ceil(px/2));
     }
 
-    // Shirt (blue like Terraria default)
+    // Shirt (blue with shading)
     ctx.fillStyle = "#2E5CB8";
-    ctx.fillRect(x + 2*px, y + 7*px, 7*px, 5*px);  // torso
+    ctx.fillRect(x + 2*px, y + 7*px, 7*px, 5*px);
+    // Shirt highlight
+    ctx.fillStyle = "rgba(100,150,230,0.3)";
+    ctx.fillRect(x + 3*px, y + 7*px, 3*px, px);
+    // Shirt shadow
+    ctx.fillStyle = "rgba(0,0,0,0.15)";
+    ctx.fillRect(x + 2*px, y + 11*px, 7*px, px);
+
     // Sleeves
-    ctx.fillRect(x, y + 7*px, 2*px, 4*px);          // left arm
-    ctx.fillRect(x + 9*px, y + 7*px, 2*px, 4*px);   // right arm
+    ctx.fillStyle = "#2E5CB8";
+    ctx.fillRect(x, y + 7*px, 2*px, 4*px);
+    ctx.fillRect(x + 9*px, y + 7*px, 2*px, 4*px);
 
     // Hands (skin)
     ctx.fillStyle = "#FFCBA4";
-    ctx.fillRect(x, y + 11*px, 2*px, 2*px);         // left hand
-    ctx.fillRect(x + 9*px, y + 11*px, 2*px, 2*px);  // right hand
+    ctx.fillRect(x, y + 11*px, 2*px, 2*px);
+    ctx.fillRect(x + 9*px, y + 11*px, 2*px, 2*px);
 
-    // Pants (brown like Terraria default)
-    ctx.fillStyle = "#6B4226";
-    ctx.fillRect(x + 3*px, y + 12*px, 5*px, 4*px);  // waist area
-    // Legs
-    ctx.fillRect(x + 3*px, y + 16*px, 2*px, 2*px);  // left leg
-    ctx.fillRect(x + 6*px, y + 16*px, 2*px, 2*px);  // right leg
-
-    // Shoes (darker)
+    // Belt
     ctx.fillStyle = "#3B2010";
-    ctx.fillRect(x + 3*px, y + 18*px, 2*px, 2*px);  // left shoe
-    ctx.fillRect(x + 6*px, y + 18*px, 2*px, 2*px);  // right shoe
+    ctx.fillRect(x + 3*px, y + 12*px, 5*px, px);
+    // Belt buckle
+    ctx.fillStyle = "#C0A030";
+    ctx.fillRect(x + 5*px, y + 12*px, px, px);
+
+    // Pants (brown with shading)
+    ctx.fillStyle = "#6B4226";
+    ctx.fillRect(x + 3*px, y + 13*px, 5*px, 3*px);
+    // Pants highlight
+    ctx.fillStyle = "rgba(140,90,50,0.3)";
+    ctx.fillRect(x + 4*px, y + 13*px, 2*px, px);
+
+    // Legs
+    ctx.fillStyle = "#6B4226";
+    ctx.fillRect(x + 3*px, y + 16*px, 2*px, 2*px);
+    ctx.fillRect(x + 6*px, y + 16*px, 2*px, 2*px);
+
+    // Shoes (with highlight)
+    ctx.fillStyle = "#3B2010";
+    ctx.fillRect(x + 3*px, y + 18*px, 2*px, 2*px);
+    ctx.fillRect(x + 6*px, y + 18*px, 2*px, 2*px);
+    // Shoe highlight
+    ctx.fillStyle = "rgba(80,50,30,0.5)";
+    ctx.fillRect(x + 3*px, y + 18*px, 2*px, Math.ceil(px/2));
+    ctx.fillRect(x + 6*px, y + 18*px, 2*px, Math.ceil(px/2));
 }
 
 // --- Draw ---
 function draw() {
     // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, GAME_W, GAME_H);
 
     // Draw themed background (before camera transform)
     const bgTheme = getThemeForY(player.y);
@@ -694,7 +813,7 @@ function draw() {
     // Draw platforms (themed style with rounded corners)
     for (const platform of platforms) {
         // Skip platforms outside visible area
-        if (platform.y + platform.height < camera.y - 50 || platform.y > camera.y + canvas.height + 50) continue;
+        if (platform.y + platform.height < camera.y - 50 || platform.y > camera.y + GAME_H + 50) continue;
 
         const theme = getThemeForY(platform.y);
         const r = Math.min(6, platform.height / 2);
@@ -858,22 +977,29 @@ function draw() {
     ctx.restore(); // remove camera transform
 
     // Draw HUD (not affected by camera)
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(0, 0, GAME_W, 70);
+
     ctx.fillStyle = "#ffffff";
-    ctx.font = "14px monospace";
-    ctx.fillText("Arrow Keys / WASD to move  |  Space / Up / W to jump", 140, 20);
+    ctx.font = "18px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("Arrow Keys / WASD to move  |  Space / Up / W to jump", GAME_W / 2, 25);
+    ctx.textAlign = "start";
 
     // Score & Level name
     const currentTheme = getThemeForY(player.y);
-    ctx.font = "bold 18px monospace";
-    ctx.fillText("Score: " + score, 20, 48);
+    ctx.font = "bold 28px monospace";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("Score: " + score, 30, 58);
     ctx.fillStyle = currentTheme.wallAccent;
-    ctx.fillText(currentTheme.name, canvas.width - 150, 48);
+    ctx.font = "bold 24px monospace";
+    ctx.fillText(currentTheme.name, GAME_W - 220, 58);
 
     // Show username
     if (currentUser) {
-        ctx.fillStyle = "#aaaaaa";
-        ctx.font = "12px monospace";
-        ctx.fillText(currentUser.username, 20, 70);
+        ctx.fillStyle = "#cccccc";
+        ctx.font = "16px monospace";
+        ctx.fillText(currentUser.username, 30, 90);
     }
 }
 
@@ -881,13 +1007,13 @@ function draw() {
 function drawGameOver() {
     // Dim overlay
     ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
 
     // Game Over box
-    const boxW = 340;
-    const boxH = 320;
-    const boxX = (canvas.width - boxW) / 2;
-    const boxY = (canvas.height - boxH) / 2;
+    const boxW = 500;
+    const boxH = 450;
+    const boxX = (GAME_W - boxW) / 2;
+    const boxY = (GAME_H - boxH) / 2;
 
     // Box background
     ctx.fillStyle = "#1a1a2e";
@@ -904,38 +1030,38 @@ function drawGameOver() {
 
     // Title
     ctx.fillStyle = "#e94560";
-    ctx.font = "bold 36px monospace";
+    ctx.font = "bold 48px monospace";
     ctx.textAlign = "center";
-    ctx.fillText("GAME OVER", canvas.width / 2, boxY + 55);
+    ctx.fillText("GAME OVER", GAME_W / 2, boxY + 70);
 
     // Score
     ctx.fillStyle = "#ffffff";
-    ctx.font = "20px monospace";
-    ctx.fillText("Score: " + finalScore, canvas.width / 2, boxY + 100);
+    ctx.font = "28px monospace";
+    ctx.fillText("Score: " + finalScore, GAME_W / 2, boxY + 130);
 
     // Level reached
     const theme = getThemeForY(player.y);
     ctx.fillStyle = theme.wallAccent;
-    ctx.font = "16px monospace";
-    ctx.fillText("Reached: " + theme.name, canvas.width / 2, boxY + 130);
+    ctx.font = "22px monospace";
+    ctx.fillText("Reached: " + theme.name, GAME_W / 2, boxY + 170);
 
     // Leaderboard in game over
     ctx.fillStyle = "#e94560";
-    ctx.font = "bold 14px monospace";
-    ctx.fillText("LEADERBOARD", canvas.width / 2, boxY + 160);
+    ctx.font = "bold 20px monospace";
+    ctx.fillText("LEADERBOARD", GAME_W / 2, boxY + 220);
 
-    ctx.font = "12px monospace";
+    ctx.font = "16px monospace";
     for (let i = 0; i < Math.min(5, leaderboard.length); i++) {
         const entry = leaderboard[i];
-        const ly = boxY + 180 + i * 18;
+        const ly = boxY + 250 + i * 24;
         ctx.fillStyle = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#aaa";
-        ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score}`, canvas.width / 2, ly);
+        ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score}`, GAME_W / 2, ly);
     }
 
     // Restart prompt
     ctx.fillStyle = "#aaaaaa";
-    ctx.font = "14px monospace";
-    ctx.fillText("Press ENTER or SPACE to restart", canvas.width / 2, boxY + 295);
+    ctx.font = "18px monospace";
+    ctx.fillText("Press ENTER or SPACE to restart", GAME_W / 2, boxY + 420);
 
     ctx.textAlign = "start";
 }
@@ -944,92 +1070,95 @@ function drawGameOver() {
 function drawLoginScreen() {
     // Background
     ctx.fillStyle = "#1a1a2e";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
 
     // Title
     ctx.fillStyle = "#e94560";
-    ctx.font = "bold 40px monospace";
+    ctx.font = "bold 60px monospace";
     ctx.textAlign = "center";
-    ctx.fillText("2D PLATFORMER", canvas.width / 2, 80);
+    ctx.fillText("2D PLATFORMER", GAME_W / 2, 150);
 
     // Subtitle
     ctx.fillStyle = "#aaaaaa";
-    ctx.font = "16px monospace";
-    ctx.fillText(loginMode === "login" ? "Login to play" : "Create an account", canvas.width / 2, 115);
+    ctx.font = "22px monospace";
+    ctx.fillText(loginMode === "login" ? "Login to play" : "Create an account", GAME_W / 2, 195);
 
-    const boxW = 350;
-    const boxX = (canvas.width - boxW) / 2;
+    const boxW = 480;
+    const boxX = (GAME_W - boxW) / 2;
 
     // Username field
     ctx.fillStyle = activeField === "username" ? "#2a2a4e" : "#16213e";
     ctx.strokeStyle = activeField === "username" ? "#e94560" : "#333";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect(boxX, 145, boxW, 40, 6);
+    ctx.roundRect(boxX, 240, boxW, 55, 8);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = "#888";
-    ctx.font = "14px monospace";
+    ctx.font = "16px monospace";
     ctx.textAlign = "left";
-    ctx.fillText("Username", boxX + 10, 140);
+    ctx.fillText("Username", boxX + 14, 233);
     ctx.fillStyle = "#fff";
-    ctx.fillText(inputUsername + (activeField === "username" ? "▌" : ""), boxX + 12, 172);
+    ctx.font = "20px monospace";
+    ctx.fillText(inputUsername + (activeField === "username" ? "▌" : ""), boxX + 16, 275);
 
     // Password field
     ctx.fillStyle = activeField === "password" ? "#2a2a4e" : "#16213e";
     ctx.strokeStyle = activeField === "password" ? "#e94560" : "#333";
     ctx.beginPath();
-    ctx.roundRect(boxX, 210, boxW, 40, 6);
+    ctx.roundRect(boxX, 325, boxW, 55, 8);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = "#888";
-    ctx.fillText("Password", boxX + 10, 205);
+    ctx.font = "16px monospace";
+    ctx.fillText("Password", boxX + 14, 318);
     ctx.fillStyle = "#fff";
-    ctx.fillText("•".repeat(inputPassword.length) + (activeField === "password" ? "▌" : ""), boxX + 12, 237);
+    ctx.font = "20px monospace";
+    ctx.fillText("•".repeat(inputPassword.length) + (activeField === "password" ? "▌" : ""), boxX + 16, 360);
 
     // Submit button
     ctx.fillStyle = "#e94560";
     ctx.beginPath();
-    ctx.roundRect(boxX, 275, boxW, 40, 6);
+    ctx.roundRect(boxX, 410, boxW, 55, 8);
     ctx.fill();
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 16px monospace";
+    ctx.font = "bold 22px monospace";
     ctx.textAlign = "center";
-    ctx.fillText(loginMode === "login" ? "LOGIN" : "REGISTER", canvas.width / 2, 300);
+    ctx.fillText(loginMode === "login" ? "LOGIN" : "REGISTER", GAME_W / 2, 445);
 
     // Toggle mode
     ctx.fillStyle = "#888";
-    ctx.font = "13px monospace";
+    ctx.font = "16px monospace";
     if (loginMode === "login") {
-        ctx.fillText("No account? Press F2 to register", canvas.width / 2, 340);
+        ctx.fillText("No account? Press F2 to register", GAME_W / 2, 500);
     } else {
-        ctx.fillText("Have an account? Press F2 to login", canvas.width / 2, 340);
+        ctx.fillText("Have an account? Press F2 to login", GAME_W / 2, 500);
     }
 
     // Error message
     if (loginError) {
         ctx.fillStyle = "#ff4444";
-        ctx.font = "14px monospace";
-        ctx.fillText(loginError, canvas.width / 2, 375);
+        ctx.font = "18px monospace";
+        ctx.fillText(loginError, GAME_W / 2, 545);
     }
 
     // Leaderboard
     ctx.fillStyle = "#e94560";
-    ctx.font = "bold 18px monospace";
-    ctx.fillText("TOP SCORES", canvas.width / 2, 415);
+    ctx.font = "bold 26px monospace";
+    ctx.fillText("TOP SCORES", GAME_W / 2, 610);
 
-    ctx.font = "13px monospace";
+    ctx.font = "18px monospace";
     if (leaderboard.length === 0) {
         ctx.fillStyle = "#666";
-        ctx.fillText("No scores yet — be the first!", canvas.width / 2, 445);
+        ctx.fillText("No scores yet — be the first!", GAME_W / 2, 650);
     } else {
         for (let i = 0; i < Math.min(5, leaderboard.length); i++) {
             const entry = leaderboard[i];
-            const y = 440 + i * 20;
+            const y = 650 + i * 30;
             ctx.fillStyle = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#aaa";
-            ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score} (${entry.level_reached})`, canvas.width / 2, y);
+            ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score} (${entry.level_reached})`, GAME_W / 2, y);
         }
     }
 
@@ -1134,7 +1263,88 @@ document.addEventListener("keydown", (e) => {
         gameScreen = "playing";
         resetGame();
     }
+
+    // Pause / Resume with Escape
+    if (e.key === "Escape") {
+        if (gameScreen === "playing") {
+            gameScreen = "paused";
+        } else if (gameScreen === "paused") {
+            gameScreen = "playing";
+        }
+    }
+
+    // Pause menu: Enter to go to main menu
+    if (gameScreen === "paused" && e.key === "Enter") {
+        gameScreen = "login";
+        gameOver = false;
+        currentUser = null;
+        inputUsername = "";
+        inputPassword = "";
+        fetchLeaderboard();
+    }
 });
+
+// --- Pause Screen ---
+function drawPauseScreen() {
+    // Dim overlay
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+    // Pause box
+    const boxW = 460;
+    const boxH = 340;
+    const boxX = (GAME_W - boxW) / 2;
+    const boxY = (GAME_H - boxH) / 2;
+
+    // Box background
+    ctx.fillStyle = "#1a1a2e";
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 14);
+    ctx.fill();
+
+    // Box border
+    ctx.strokeStyle = "#e94560";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 14);
+    ctx.stroke();
+
+    // Title
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 44px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("PAUSED", GAME_W / 2, boxY + 65);
+
+    // Current score
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "26px monospace";
+    ctx.fillText("Score: " + score, GAME_W / 2, boxY + 120);
+
+    // Level
+    const theme = getThemeForY(player.y);
+    ctx.fillStyle = theme.wallAccent;
+    ctx.font = "20px monospace";
+    ctx.fillText("Level: " + theme.name, GAME_W / 2, boxY + 160);
+
+    // Username
+    if (currentUser) {
+        ctx.fillStyle = "#cccccc";
+        ctx.font = "18px monospace";
+        ctx.fillText("Player: " + currentUser.username, GAME_W / 2, boxY + 200);
+    }
+
+    // Resume option
+    ctx.fillStyle = "#aaaaaa";
+    ctx.font = "18px monospace";
+    ctx.fillText("Press ESC to resume", GAME_W / 2, boxY + 260);
+
+    // Main menu option
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText("Press ENTER for Main Menu", GAME_W / 2, boxY + 300);
+
+    ctx.textAlign = "start";
+}
 
 // --- Game Over (modified to save score) ---
 function triggerGameOver() {
@@ -1153,6 +1363,8 @@ function gameLoop() {
         draw();
         if (gameScreen === "gameover") {
             drawGameOver();
+        } else if (gameScreen === "paused") {
+            drawPauseScreen();
         }
     }
     requestAnimationFrame(gameLoop);

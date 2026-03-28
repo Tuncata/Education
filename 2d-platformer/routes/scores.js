@@ -22,13 +22,17 @@ router.post("/save", (req, res) => {
     res.json({ message: "Score saved!" });
 });
 
-// Get top 10 rankings
+// Get top 10 rankings (only highest score per player)
 router.get("/ranking", (req, res) => {
     const rankings = db.prepare(`
-        SELECT users.username, scores.score, scores.level_reached, scores.created_at
-        FROM scores
-        JOIN users ON users.id = scores.user_id
-        ORDER BY scores.score DESC
+        SELECT u.username, s.score, s.level_reached
+        FROM scores s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.score = (
+            SELECT MAX(s2.score) FROM scores s2 WHERE s2.user_id = s.user_id
+        )
+        GROUP BY s.user_id
+        ORDER BY s.score DESC
         LIMIT 10
     `).all();
 
