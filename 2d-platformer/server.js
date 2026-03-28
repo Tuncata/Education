@@ -1,6 +1,7 @@
 const express = require("express");
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const db = require("./database");
 
 // Parse JSON request bodies (must be BEFORE routes)
 app.use(express.json());
@@ -19,6 +20,9 @@ app.get("/api/hello", (req, res) => {
     res.json({ message: "Server is working!" });
 });
 
-app.listen(PORT, () => {
-    console.log("Server running at http://localhost:" + PORT);
+// Wait for database to initialize, then start server
+db.init().then(() => {
+    app.listen(PORT, () => {
+        console.log("Server running at http://localhost:" + PORT);
+    });
 });
