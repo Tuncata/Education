@@ -375,13 +375,32 @@ function drawWallBrick(wx, wy, w, h, offsetX, theme, isLeft) {
 }
 
 // --- Procedural Platform Generation ---
+// Max horizontal jump distance the player can cover (~150px with speed 2.5 and gravity 0.35)
+const MAX_JUMP_REACH_X = 140;
+let lastPlatX = 400; // center of last platform (track for reachability)
+let lastPlatW = 120;
+
 function generatePlatforms() {
-    // Generate new platforms above the current highest one
     while (highestPlatformY > camera.y - 300) {
-        highestPlatformY -= 45 + Math.random() * 30; // 45-75px gap (reachable with jump)
+        highestPlatformY -= 45 + Math.random() * 30; // 45-75px vertical gap
         const playArea = canvas.width - wallWidth * 2;
         const width = 90 + Math.random() * 80;       // 90-170px wide
-        const x = wallWidth + Math.random() * (playArea - width);
+
+        // Ensure the new platform is within horizontal jump reach of the last one
+        const lastLeft = lastPlatX - lastPlatW / 2;
+        const lastRight = lastPlatX + lastPlatW / 2;
+
+        // Reachable X range: player can jump from either edge of the last platform
+        const reachMin = Math.max(wallWidth, lastLeft - MAX_JUMP_REACH_X);
+        const reachMax = Math.min(canvas.width - wallWidth - width, lastRight + MAX_JUMP_REACH_X - width);
+
+        let x;
+        if (reachMin < reachMax) {
+            x = reachMin + Math.random() * (reachMax - reachMin);
+        } else {
+            // Fallback: place near center of play area
+            x = wallWidth + (playArea - width) / 2;
+        }
 
         const plat = {
             x: x,
@@ -406,18 +425,9 @@ function generatePlatforms() {
 
         platforms.push(plat);
 
-        // Add an extra stepping-stone platform if the gap is wide horizontally
-        // (ensures there's always a reachable path)
-        if (Math.random() < 0.3) {
-            const extraWidth = 70 + Math.random() * 50;
-            const extraX = wallWidth + Math.random() * (playArea - extraWidth);
-            platforms.push({
-                x: extraX,
-                y: highestPlatformY + 20 + Math.random() * 15,
-                width: extraWidth,
-                height: 16
-            });
-        }
+        // Update tracking for next platform
+        lastPlatX = x + width / 2;
+        lastPlatW = width;
     }
 }
 
@@ -481,6 +491,8 @@ function resetGame() {
         { x: 80,  y: 100, width: 120, height: 16 }
     );
     highestPlatformY = 100;
+    lastPlatX = 140; // center of the top starting platform (x:80, w:120)
+    lastPlatW = 120;
     bgParticles.length = 0;
 }
 
