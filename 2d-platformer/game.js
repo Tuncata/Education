@@ -29,7 +29,7 @@ const player = {
 
 // --- Physics ---
 const gravity = 0.35;
-const friction = 0.8;
+const friction = 0.5;
 
 // --- Platforms ---
 // Each platform can optionally have: moving, moveSpeed, moveMin, moveMax
