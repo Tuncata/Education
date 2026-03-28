@@ -5,6 +5,17 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
+// --- Current User (logged in) ---
+let currentUser = null; // { userId, username }
+let gameScreen = "login"; // "login", "playing", "gameover"
+let loginError = "";
+let loginMode = "login"; // "login" or "register"
+let inputUsername = "";
+let inputPassword = "";
+let activeField = "username"; // which input is focused
+let leaderboard = []; // top scores
+let scoreSaved = false;
+
 // --- Camera ---
 const camera = {
     y: 0,        // world Y offset (negative = scrolled up)
@@ -599,8 +610,7 @@ function update() {
 
     // Game Over if player falls below the visible screen
     if (player.y > camera.y + canvas.height + 50) {
-        gameOver = true;
-        finalScore = score;
+        triggerGameOver();
     }
 }
 
@@ -858,6 +868,13 @@ function draw() {
     ctx.fillText("Score: " + score, 20, 48);
     ctx.fillStyle = currentTheme.wallAccent;
     ctx.fillText(currentTheme.name, canvas.width - 150, 48);
+
+    // Show username
+    if (currentUser) {
+        ctx.fillStyle = "#aaaaaa";
+        ctx.font = "12px monospace";
+        ctx.fillText(currentUser.username, 20, 70);
+    }
 }
 
 // --- Game Over Screen ---
@@ -868,7 +885,7 @@ function drawGameOver() {
 
     // Game Over box
     const boxW = 340;
-    const boxH = 200;
+    const boxH = 320;
     const boxX = (canvas.width - boxW) / 2;
     const boxY = (canvas.height - boxH) / 2;
 
@@ -902,30 +919,245 @@ function drawGameOver() {
     ctx.font = "16px monospace";
     ctx.fillText("Reached: " + theme.name, canvas.width / 2, boxY + 130);
 
+    // Leaderboard in game over
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 14px monospace";
+    ctx.fillText("LEADERBOARD", canvas.width / 2, boxY + 160);
+
+    ctx.font = "12px monospace";
+    for (let i = 0; i < Math.min(5, leaderboard.length); i++) {
+        const entry = leaderboard[i];
+        const ly = boxY + 180 + i * 18;
+        ctx.fillStyle = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#aaa";
+        ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score}`, canvas.width / 2, ly);
+    }
+
     // Restart prompt
     ctx.fillStyle = "#aaaaaa";
     ctx.font = "14px monospace";
-    ctx.fillText("Press ENTER or SPACE to restart", canvas.width / 2, boxY + 170);
+    ctx.fillText("Press ENTER or SPACE to restart", canvas.width / 2, boxY + 295);
 
-    ctx.textAlign = "start"; // reset alignment
+    ctx.textAlign = "start";
 }
 
-// --- Restart listener ---
+// --- Login Screen ---
+function drawLoginScreen() {
+    // Background
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Title
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 40px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("2D PLATFORMER", canvas.width / 2, 80);
+
+    // Subtitle
+    ctx.fillStyle = "#aaaaaa";
+    ctx.font = "16px monospace";
+    ctx.fillText(loginMode === "login" ? "Login to play" : "Create an account", canvas.width / 2, 115);
+
+    const boxW = 350;
+    const boxX = (canvas.width - boxW) / 2;
+
+    // Username field
+    ctx.fillStyle = activeField === "username" ? "#2a2a4e" : "#16213e";
+    ctx.strokeStyle = activeField === "username" ? "#e94560" : "#333";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(boxX, 145, boxW, 40, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#888";
+    ctx.font = "14px monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("Username", boxX + 10, 140);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(inputUsername + (activeField === "username" ? "▌" : ""), boxX + 12, 172);
+
+    // Password field
+    ctx.fillStyle = activeField === "password" ? "#2a2a4e" : "#16213e";
+    ctx.strokeStyle = activeField === "password" ? "#e94560" : "#333";
+    ctx.beginPath();
+    ctx.roundRect(boxX, 210, boxW, 40, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#888";
+    ctx.fillText("Password", boxX + 10, 205);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("•".repeat(inputPassword.length) + (activeField === "password" ? "▌" : ""), boxX + 12, 237);
+
+    // Submit button
+    ctx.fillStyle = "#e94560";
+    ctx.beginPath();
+    ctx.roundRect(boxX, 275, boxW, 40, 6);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 16px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(loginMode === "login" ? "LOGIN" : "REGISTER", canvas.width / 2, 300);
+
+    // Toggle mode
+    ctx.fillStyle = "#888";
+    ctx.font = "13px monospace";
+    if (loginMode === "login") {
+        ctx.fillText("No account? Press F2 to register", canvas.width / 2, 340);
+    } else {
+        ctx.fillText("Have an account? Press F2 to login", canvas.width / 2, 340);
+    }
+
+    // Error message
+    if (loginError) {
+        ctx.fillStyle = "#ff4444";
+        ctx.font = "14px monospace";
+        ctx.fillText(loginError, canvas.width / 2, 375);
+    }
+
+    // Leaderboard
+    ctx.fillStyle = "#e94560";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText("TOP SCORES", canvas.width / 2, 415);
+
+    ctx.font = "13px monospace";
+    if (leaderboard.length === 0) {
+        ctx.fillStyle = "#666";
+        ctx.fillText("No scores yet — be the first!", canvas.width / 2, 445);
+    } else {
+        for (let i = 0; i < Math.min(5, leaderboard.length); i++) {
+            const entry = leaderboard[i];
+            const y = 440 + i * 20;
+            ctx.fillStyle = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#aaa";
+            ctx.fillText(`${i + 1}. ${entry.username} — ${entry.score} (${entry.level_reached})`, canvas.width / 2, y);
+        }
+    }
+
+    ctx.textAlign = "start";
+}
+
+// --- Fetch leaderboard ---
+async function fetchLeaderboard() {
+    try {
+        const res = await fetch("/api/scores/ranking");
+        leaderboard = await res.json();
+    } catch (e) {
+        leaderboard = [];
+    }
+}
+
+// --- Submit login/register ---
+async function submitAuth() {
+    if (!inputUsername || !inputPassword) {
+        loginError = "Please fill in both fields";
+        return;
+    }
+
+    const endpoint = loginMode === "login" ? "/api/auth/login" : "/api/auth/register";
+
+    try {
+        const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: inputUsername, password: inputPassword })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            loginError = data.error;
+            return;
+        }
+
+        if (loginMode === "register") {
+            // Auto-login after register
+            loginMode = "login";
+            loginError = "";
+            submitAuth();
+            return;
+        }
+
+        // Login successful
+        currentUser = { userId: data.userId, username: data.username };
+        gameScreen = "playing";
+        loginError = "";
+        resetGame();
+    } catch (e) {
+        loginError = "Server error — is the server running?";
+    }
+}
+
+// --- Save score to server ---
+async function saveScore() {
+    if (!currentUser || scoreSaved) return;
+    scoreSaved = true;
+
+    const levelTheme = getThemeForY(player.y);
+    try {
+        await fetch("/api/scores/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                userId: currentUser.userId,
+                score: finalScore,
+                levelReached: levelTheme.name
+            })
+        });
+        fetchLeaderboard();
+    } catch (e) {
+        // silently fail
+    }
+}
+
+// --- Input handling for login screen ---
 document.addEventListener("keydown", (e) => {
-    if (gameOver && (e.key === "Enter" || e.key === " ")) {
+    if (gameScreen === "login") {
+        if (e.key === "Tab") {
+            e.preventDefault();
+            activeField = activeField === "username" ? "password" : "username";
+        } else if (e.key === "Enter") {
+            submitAuth();
+        } else if (e.key === "F2") {
+            loginMode = loginMode === "login" ? "register" : "login";
+            loginError = "";
+        } else if (e.key === "Backspace") {
+            if (activeField === "username") inputUsername = inputUsername.slice(0, -1);
+            else inputPassword = inputPassword.slice(0, -1);
+        } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey) {
+            if (activeField === "username") inputUsername += e.key;
+            else inputPassword += e.key;
+        }
+        return;
+    }
+
+    if (gameScreen === "gameover" && (e.key === "Enter" || e.key === " ")) {
+        scoreSaved = false;
+        gameScreen = "playing";
         resetGame();
     }
 });
 
+// --- Game Over (modified to save score) ---
+function triggerGameOver() {
+    gameOver = true;
+    finalScore = score;
+    gameScreen = "gameover";
+    saveScore();
+}
+
 // --- Game Loop ---
 function gameLoop() {
-    update();
-    draw();
-    if (gameOver) {
-        drawGameOver();
+    if (gameScreen === "login") {
+        drawLoginScreen();
+    } else {
+        update();
+        draw();
+        if (gameScreen === "gameover") {
+            drawGameOver();
+        }
     }
     requestAnimationFrame(gameLoop);
 }
 
-// Start the game
+// Load leaderboard and start
+fetchLeaderboard();
 gameLoop();
